@@ -99,9 +99,9 @@ def main(n_iter=60, random_state=42):
     report_metrics("Random Forest (tuned)", y_te, p_test, thr)
 
     try:
-        pd.DataFrame(search.cv_results_).to_csv("rf_tuning_cv_results.csv", index=False)
+        pd.DataFrame(search.cv_results_).to_csv("tuning/rf_tuning_cv_results.csv", index=False)
         importances = pd.Series(rf_best.feature_importances_, index=X_tr.columns).sort_values(ascending=False)
-        importances.to_csv("rf_tuned_feature_importance.csv")
+        importances.to_csv("tuning/rf_tuned_feature_importance.csv")
         print("\nSaved: rf_tuning_cv_results.csv, rf_tuned_feature_importance.csv")
     except Exception as e:
         print(f"(Skip saving artifacts) {e}")
