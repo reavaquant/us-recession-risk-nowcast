@@ -319,7 +319,7 @@ def main():
     X80, y80 = X.iloc[:i_va], y.iloc[:i_va]
     cv_log = rolling_cv_scores(logit, X80, y80, n_splits=5, gap=H)
     cv_xgb = rolling_cv_scores(xgb, X80, y80, n_splits=5, gap=H)
-    cv_rf  = rolling_cv_scores(rf, X80, y80, n_splits=5, gap=H)
+    cv_rf = rolling_cv_scores(rf, X80, y80, n_splits=5, gap=H)
     cvlogpca = rolling_cv_scores(pca_logit, X80, y80, n_splits=5, gap=H)
 
     print("\n-- Rolling CV (mean ± std) on first 80% --")
@@ -331,7 +331,7 @@ def main():
     # Robustness: sliding tests over the full span
     st_log = sliding_test_scores(logit, X, y, window=0.2, step=0.05)
     st_xgb = sliding_test_scores(xgb, X, y, window=0.2, step=0.05)
-    st_rf  = sliding_test_scores(rf, X, y, window=0.2, step=0.05)
+    st_rf = sliding_test_scores(rf, X, y, window=0.2, step=0.05)
     st_logpca = sliding_test_scores(pca_logit, X, y, window=0.2, step=0.05)
 
     def summarize_sliding(name, dfst):
