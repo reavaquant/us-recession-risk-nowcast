@@ -1,0 +1,7 @@
+# data/
+# tuning/
+__pychace__/
+*.pyc
+
+#env
+venv/
