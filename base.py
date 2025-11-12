@@ -26,6 +26,27 @@ FILES = {
 H = 6
 
 def _load_series(path, series_name):
+    """
+    Load a series from a file and return it as a pandas Series.
+
+    Parameters
+    ----------
+    path : str
+        Path to the file containing the series.
+    series_name : str
+        Name to give to the series.
+
+    Returns
+    -------
+    pd.Series
+        Loaded series.
+
+    Raises
+    ------
+    ValueError
+        If the file at `path` does not contain exactly one column
+        of data (in addition to the "observation_date" column).
+    """
     data = pd.read_csv(path, parse_dates=["observation_date"])
     value_cols = [c for c in data.columns if c != "observation_date"]
     if len(value_cols) != 1:
@@ -65,7 +86,6 @@ def compute_features(files, horizon=H):
     return data, y
 
 def report_metrics(name, y_true, y_prob, threshold):
-    """Print ROC-AUC, PR-AUC, baseline PR, classification report, and confusion matrix."""
     y_pred = (y_prob >= threshold).astype(int)
     base_rate = y_true.mean()  # baseline for PR-AUC
     print(f"\n=== {name} @ threshold={threshold:.3f} ===")
@@ -75,7 +95,23 @@ def report_metrics(name, y_true, y_prob, threshold):
     print("Classification report:\n", classification_report(y_true, y_pred, digits=3))
 
 def best_threshold_by_f1(y_true, y_prob):
-    """Return threshold that maximizes F1 on the precision-recall curve."""
+    """
+    Find the best threshold to maximize the F1-score between the true labels, y_true, and the predicted probabilities, y_prob.
+
+    Parameters
+    ----------
+    y_true : array-like, shape (n_samples,)
+        True labels.
+    y_prob : array-like, shape (n_samples,)
+        Predicted probabilities.
+
+    Returns
+    -------
+    thr : float
+        The best threshold.
+    f1 : float
+        The best F1-score.
+    """
     p, r, thr = precision_recall_curve(y_true, y_prob)
     f1 = (2 * p * r / (p + r + 1e-12))[:-1]  # drop last point (no threshold)
     if len(f1) == 0:
@@ -85,9 +121,25 @@ def best_threshold_by_f1(y_true, y_prob):
 
 def rolling_cv_scores(model, X, y, n_splits=5, gap=H):
     """
-    Expanding-window CV on X,y.
-    - Skip if train or val < 2 classes.
-    - XGBoost: use eval_set=(val) + early_stopping.
+    Compute rolling cross-validation scores for a given model and data.
+
+    Parameters
+    ----------
+    model : sklearn.base.BaseEstimator
+        Model to evaluate.
+    X : pd.DataFrame
+        Feature matrix.
+    y : pd.Series
+        Target vector.
+    n_splits : int, optional
+        Number of CV folds. Default is 5.
+    gap : int, optional
+        Gap, in samples, between train and validation. Default is H.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the rolling cross-validation scores.
     """
     tscv = TimeSeriesSplit(n_splits=n_splits, gap=gap)
     rows = []
@@ -124,11 +176,25 @@ def rolling_cv_scores(model, X, y, n_splits=5, gap=H):
 
 def sliding_test_scores(model, X, y, window=0.2, step=0.05):
     """
-    Fenêtres glissantes OOS :
-    - Entraîne sur le passé uniquement.
-    - Split interne 80/20 dans le train pour fixer le seuil F1.
-    - Clone du modèle à chaque fenêtre.
-    - Skip si train <2 classes ou test <2 classes.
+    Evaluate a model on a sliding window of the dataset.
+
+    Parameters
+    ----------
+    model : sklearn estimator
+        Model to evaluate.
+    X : pd.DataFrame
+        DataFrame containing the feature data.
+    y : pd.Series
+        Series containing the target data.
+    window : float, optional
+        Fraction of the dataset to use as the sliding window. Defaults to 0.2.
+    step : float, optional
+        Fraction of the dataset to use as the step size. Defaults to 0.05.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the evaluation metrics for each window.
     """
     n = len(X)
     w = int(n*window)

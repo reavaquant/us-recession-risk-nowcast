@@ -11,6 +11,23 @@ from sklearn.metrics import (
 from base import compute_features, FILES, H
 
 def best_threshold_by_f1(y_true, y_prob):
+    """
+    Return the best threshold for a given set of predictions, y_prob, which maximizes the F1-score.
+    
+    Parameters
+    ----------
+    y_true : array-like, shape (n_samples,)
+        True labels.
+    y_prob : array-like, shape (n_samples,)
+        Predicted probabilities.
+    
+    Returns
+    -------
+    thr : float
+        The best threshold.
+    f1 : float
+        The best F1-score.
+    """
     P, R, T = precision_recall_curve(y_true, y_prob)
     if len(T) == 0:
         return 0.5, 0.0
@@ -19,7 +36,27 @@ def best_threshold_by_f1(y_true, y_prob):
     return float(T[ix]), float(F1[ix])
 
 def time_cv_with_positives(X, y, n_splits=5, gap=H, min_pos=1):
-    """Return a list of (train_idx, val_idx) where both splits contain positives."""
+    """
+    Return TimeSeriesSplit CV folds which contain positives in both train and validation.
+
+    Parameters
+    ----------
+    X : pd.DataFrame
+        Feature matrix.
+    y : pd.Series
+        Target vector.
+    n_splits : int, optional
+        Number of CV folds. Default is 5.
+    gap : int, optional
+        Gap, in samples, between train and validation. Default is H.
+    min_pos : int, optional
+        Minimum number of positives in both train and validation. Default is 1.
+
+    Returns
+    -------
+    splits : list of tuples
+        List of train and validation indices for each CV fold.
+    """
     tscv = TimeSeriesSplit(n_splits=n_splits, gap=gap)
     splits = []
     for tr, va in tscv.split(X):
