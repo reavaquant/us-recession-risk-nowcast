@@ -6,7 +6,7 @@ from sklearn.base import clone
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, roc_auc_score, average_precision_score, precision_recall_curve, confusion_matrix, balanced_accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
@@ -283,6 +283,16 @@ def main():
         scale_pos_weight=neg/max(pos,1), tree_method="hist",
         eval_metric="aucpr", early_stopping_rounds=200,random_state=42
     )
+    xgb_voting = clone(xgb).set_params(early_stopping_rounds=None)
+    voting = VotingClassifier(
+        estimators=[
+            ("logit", clone(logit)),
+            ("logit_pca", clone(pca_logit)),
+            ("rf", clone(rf)),
+            ("xgb", xgb_voting),
+        ],
+        voting="soft",
+    )
 
     # 4) Fit on TRAIN; choose threshold on VALIDATION (max F1)
     # Logistic
@@ -309,11 +319,18 @@ def main():
     thr_rf, f1_rf = best_threshold_by_f1(y_va, p_val_rf)
     print(f"[RF]  Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | Best-F1 thr: {thr_rf:.3f} (F1={f1_rf:.3f})")
 
+    # Voting ensemble
+    voting.fit(X_tr, y_tr)
+    p_val_vote = voting.predict_proba(X_va)[:, 1]
+    thr_vote, f1_vote = best_threshold_by_f1(y_va, p_val_vote)
+    print(f"[Voting] Validation PR-AUC: {average_precision_score(y_va, p_val_vote):.3f} | Best-F1 thr: {thr_vote:.3f} (F1={f1_vote:.3f})")
+
 
     report_metrics("Logistic Regression", y_te, logit.predict_proba(X_te)[:, 1], thr_log)
     report_metrics("XGBoost", y_te, xgb.predict_proba(X_te)[:, 1], thr_xgb)
     report_metrics("Random Forest", y_te, rf.predict_proba(X_te)[:, 1], thr_rf)
     report_metrics("Logistic Regression + PCA", y_te, pca_logit.predict_proba(X_te)[:, 1], thr_pca)
+    report_metrics("Voting Ensemble", y_te, voting.predict_proba(X_te)[:, 1], thr_vote)
 
     # Robustness: rolling CV on first 80% (train+val)
     X80, y80 = X.iloc[:i_va], y.iloc[:i_va]
@@ -321,9 +338,10 @@ def main():
     cv_xgb = rolling_cv_scores(xgb, X80, y80, n_splits=5, gap=H)
     cv_rf = rolling_cv_scores(rf, X80, y80, n_splits=5, gap=H)
     cvlogpca = rolling_cv_scores(pca_logit, X80, y80, n_splits=5, gap=H)
+    cv_vote = rolling_cv_scores(voting, X80, y80, n_splits=5, gap=H)
 
     print("\n-- Rolling CV (mean ± std) on first 80% --")
-    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca)]:
+    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca), ("Voting", cv_vote)]:
         m = dfcv[["roc_auc","pr_auc","base_rate"]].mean()
         s = dfcv[["roc_auc","pr_auc","base_rate"]].std()
         print(f"{name}: ROC-AUC {m['roc_auc']:.3f}±{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}±{s['pr_auc']:.3f} | base {m['base_rate']:.3f}")
@@ -333,6 +351,7 @@ def main():
     st_xgb = sliding_test_scores(xgb, X, y, window=0.2, step=0.05)
     st_rf = sliding_test_scores(rf, X, y, window=0.2, step=0.05)
     st_logpca = sliding_test_scores(pca_logit, X, y, window=0.2, step=0.05)
+    st_vote = sliding_test_scores(voting, X, y, window=0.2, step=0.05)
 
     def summarize_sliding(name, dfst):
         if len(dfst)==0:
@@ -350,7 +369,17 @@ def main():
     summarize_sliding("XGB", st_xgb)
     summarize_sliding("RF", st_rf)
     summarize_sliding("Logit+PCA", st_logpca)
+    summarize_sliding("Voting", st_vote)
 
 
 if __name__ == "__main__":
     main()
+
+
+"""
+Best Model Pick
+
+Sur le split test (101 derniers points), tous les modèles détectent les 3 récessions mais ils varient beaucoup sur la quantité de faux positifs. Le RandomForestClassifier garde le meilleur compromis : bal. accuracy ≈0.73 et F1≈0.10, mieux que Logit (0.67/0.09), Logit+PCA (0.66/0.08), XGB (0.70/0.09) et clairement devant l’ensemble Voting (0.61/0.07).
+Les PR-AUC test restent faibles pour tous (≈0.05–0.07) car le taux de base est ~3 %; dans ce contexte hautement déséquilibré, la meilleure métrique pour juger reste la bal. accuracy/F1, ce qui renforce le choix du RF pour la production actuelle.
+Sur les analyses robustesse (rolling/sliding), la Voting et le RF sont proches, mais comme son comportement sur le jeu final est le plus propre, je retiendrais le RF comme modèle principal.
+"""
