@@ -57,6 +57,23 @@ def _load_series(path, series_name):
     return series
 
 def compute_features(files, horizon=H):
+    """
+    Compute features from a set of series.
+
+    Parameters
+    ----------
+    files : dict
+        Mapping of series names to paths of files containing the series.
+    horizon : int, optional
+        Number of months to predict the recession. Defaults to H.
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenated features.
+    pd.Series
+        Target to predict (recession).
+    """
     df = pd.concat([_load_series(p, n) for n,p in files.items()], axis=1, join="inner").sort_index()
     df["sentiment"] = df["sentiment"].ffill().shift(1)
     df["target"] = df["recession"].shift(-horizon).astype(float)
