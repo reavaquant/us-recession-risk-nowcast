@@ -1,0 +1,2 @@
+- verify well compile base.py with lstm
+- optimize every model in opti.py

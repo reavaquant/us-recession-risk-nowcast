@@ -1,16 +1,17 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 from sklearn.base import clone
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, roc_auc_score, average_precision_score, precision_recall_curve, confusion_matrix, balanced_accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+
+from lstm import train_lstm_sequence
 
 
 FILES = {
@@ -50,7 +51,7 @@ def _load_series(path, series_name):
     data = pd.read_csv(path, parse_dates=["observation_date"])
     value_cols = [c for c in data.columns if c != "observation_date"]
     if len(value_cols) != 1:
-        raise ValueError(f"{path} devrait n’avoir qu’une colonne de données")
+        raise ValueError(f"{path} should have exactly one column of data")
     series = data.rename(columns={value_cols[0]: series_name}).set_index("observation_date")
     if series_name == "treasury_spread":
         series = series.resample("MS").mean() # resemple to monthly data as it is in daily originally
@@ -295,20 +296,21 @@ def main():
     )
     pos, neg = int((y_tr==1).sum()), int((y_tr==0).sum())
     xgb = XGBClassifier(
-        n_estimators=4000, learning_rate=0.02, max_depth=3,
+        n_estimators=2000, learning_rate=0.02, max_depth=3,
         subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
         scale_pos_weight=neg/max(pos,1), tree_method="hist",
         eval_metric="aucpr", early_stopping_rounds=200,random_state=42
     )
-    xgb_voting = clone(xgb).set_params(early_stopping_rounds=None)
-    voting = VotingClassifier(
+    stacking = StackingClassifier(
         estimators=[
-            ("logit", clone(logit)),
-            ("logit_pca", clone(pca_logit)),
             ("rf", clone(rf)),
-            ("xgb", xgb_voting),
+            ("xgb", clone(xgb).set_params(early_stopping_rounds=None)),
         ],
-        voting="soft",
+        final_estimator=LogisticRegression(
+            class_weight="balanced", max_iter=5000, C=0.5, solver="lbfgs", random_state=42
+        ),
+        stack_method="predict_proba",
+        n_jobs=-1,
     )
 
     # 4) Fit on TRAIN; choose threshold on VALIDATION (max F1)
@@ -336,18 +338,46 @@ def main():
     thr_rf, f1_rf = best_threshold_by_f1(y_va, p_val_rf)
     print(f"[RF]  Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | Best-F1 thr: {thr_rf:.3f} (F1={f1_rf:.3f})")
 
-    # Voting ensemble
-    voting.fit(X_tr, y_tr)
-    p_val_vote = voting.predict_proba(X_va)[:, 1]
-    thr_vote, f1_vote = best_threshold_by_f1(y_va, p_val_vote)
-    print(f"[Voting] Validation PR-AUC: {average_precision_score(y_va, p_val_vote):.3f} | Best-F1 thr: {thr_vote:.3f} (F1={f1_vote:.3f})")
+    # Stacking ensemble (RF + XGB -> Logistic)
+    stacking.fit(X_tr, y_tr)
+    p_val_stack = stacking.predict_proba(X_va)[:, 1]
+    thr_stack, f1_stack = best_threshold_by_f1(y_va, p_val_stack)
+    print(f"[Stacking RF+XGB->Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_stack):.3f} | Best-F1 thr: {thr_stack:.3f} (F1={f1_stack:.3f})")
 
 
     report_metrics("Logistic Regression", y_te, logit.predict_proba(X_te)[:, 1], thr_log)
     report_metrics("XGBoost", y_te, xgb.predict_proba(X_te)[:, 1], thr_xgb)
     report_metrics("Random Forest", y_te, rf.predict_proba(X_te)[:, 1], thr_rf)
     report_metrics("Logistic Regression + PCA", y_te, pca_logit.predict_proba(X_te)[:, 1], thr_pca)
-    report_metrics("Voting Ensemble", y_te, voting.predict_proba(X_te)[:, 1], thr_vote)
+    report_metrics("Stacking (RF+XGB -> Logit)", y_te, stacking.predict_proba(X_te)[:, 1], thr_stack)
+
+    try:
+        lstm_res = train_lstm_sequence(
+            X,
+            y,
+            i_tr=i_tr,
+            i_va=i_va,
+            lookback=18,
+            hidden_size=32,
+            num_layers=1,
+            dropout=0.15,
+            lr=1e-3,
+            batch_size=32,
+            max_epochs=200,
+            patience=10,
+            use_focal=True,
+            focal_alpha=0.25,
+            focal_gamma=2.0,
+        )
+        print(f"\n[LSTM seq2one] Validation PR-AUC: {lstm_res['val_pr_auc']:.3f} | "
+              f"Best-F1 thr: {lstm_res['threshold']:.3f} (F1={lstm_res['val_f1']:.3f}) | "
+              f"calibrated={lstm_res['calibrated']}")
+        if len(np.unique(lstm_res["test_targets"])) < 2:
+            print("[LSTM] Not enough positive/negative examples in the test window to compute full metrics.")
+        else:
+            report_metrics("LSTM (sequence)", lstm_res["test_targets"], lstm_res["test_probs"], lstm_res["threshold"])
+    except Exception as e:
+        print(f"[LSTM] skipped due to error: {e}")
 
     # Robustness: rolling CV on first 80% (train+val)
     X80, y80 = X.iloc[:i_va], y.iloc[:i_va]
@@ -355,10 +385,10 @@ def main():
     cv_xgb = rolling_cv_scores(xgb, X80, y80, n_splits=5, gap=H)
     cv_rf = rolling_cv_scores(rf, X80, y80, n_splits=5, gap=H)
     cvlogpca = rolling_cv_scores(pca_logit, X80, y80, n_splits=5, gap=H)
-    cv_vote = rolling_cv_scores(voting, X80, y80, n_splits=5, gap=H)
+    cv_stack = rolling_cv_scores(stacking, X80, y80, n_splits=5, gap=H)
 
     print("\n-- Rolling CV (mean ± std) on first 80% --")
-    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca), ("Voting", cv_vote)]:
+    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca), ("Stacking", cv_stack)]:
         m = dfcv[["roc_auc","pr_auc","base_rate"]].mean()
         s = dfcv[["roc_auc","pr_auc","base_rate"]].std()
         print(f"{name}: ROC-AUC {m['roc_auc']:.3f}±{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}±{s['pr_auc']:.3f} | base {m['base_rate']:.3f}")
@@ -368,7 +398,7 @@ def main():
     st_xgb = sliding_test_scores(xgb, X, y, window=0.2, step=0.05)
     st_rf = sliding_test_scores(rf, X, y, window=0.2, step=0.05)
     st_logpca = sliding_test_scores(pca_logit, X, y, window=0.2, step=0.05)
-    st_vote = sliding_test_scores(voting, X, y, window=0.2, step=0.05)
+    st_stack = sliding_test_scores(stacking, X, y, window=0.2, step=0.05)
 
     def summarize_sliding(name, dfst):
         if len(dfst)==0:
@@ -386,7 +416,7 @@ def main():
     summarize_sliding("XGB", st_xgb)
     summarize_sliding("RF", st_rf)
     summarize_sliding("Logit+PCA", st_logpca)
-    summarize_sliding("Voting", st_vote)
+    summarize_sliding("Stacking", st_stack)
 
 
 if __name__ == "__main__":
@@ -394,9 +424,5 @@ if __name__ == "__main__":
 
 
 """
-Best Model Pick
-
-Sur le split test (101 derniers points), tous les modèles détectent les 3 récessions mais ils varient beaucoup sur la quantité de faux positifs. Le RandomForestClassifier garde le meilleur compromis : bal. accuracy ≈0.73 et F1≈0.10, mieux que Logit (0.67/0.09), Logit+PCA (0.66/0.08), XGB (0.70/0.09) et clairement devant l’ensemble Voting (0.61/0.07).
-Les PR-AUC test restent faibles pour tous (≈0.05–0.07) car le taux de base est ~3 %; dans ce contexte hautement déséquilibré, la meilleure métrique pour juger reste la bal. accuracy/F1, ce qui renforce le choix du RF pour la production actuelle.
-Sur les analyses robustesse (rolling/sliding), la Voting et le RF sont proches, mais comme son comportement sur le jeu final est le plus propre, je retiendrais le RF comme modèle principal.
+Base models and Ensemble model with more advanced models use by literature (Stacking model: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3624931 Machine Learning, the Treasury Yield Curve and Recession Forecasting | LSTM Model: https://arxiv.org/abs/2310.17571)
 """
