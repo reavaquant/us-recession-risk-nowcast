@@ -258,7 +258,10 @@ def main(n_iter=60, random_state=42):
                     "thr": thr_stack, "test_pr": average_precision_score(y_te, p_test_stack)})
 
     print("\n[Summary] Validation/Test PR-AUC and thresholds")
-    print(pd.DataFrame(results))
+    df_res = pd.DataFrame(results)
+    print(df_res)
+    best = df_res.sort_values("val_pr", ascending=False).iloc[0]
+    print(f"\n[Choice] Select '{best['model']}' based on highest validation PR-AUC ({best['val_pr']:.3f}); test PR-AUC={best['test_pr']:.3f}, thr={best['thr']:.3f}")
 
     try:
         pd.DataFrame(logit_search.cv_results_).to_csv("tuning/logit_tuning_cv_results.csv", index=False)
@@ -287,5 +290,149 @@ if __name__ == "__main__":
 
 
 """
+OUTPUT:
+Samples: total=505 | train=303 | val=101 | test=101
+Positives by split: train=29, val=8, test=3
 
+[Logit Tuning]
+[Logit Tuning] Best params:
+{'clf__C': np.float64(0.005337032762603957)}
+[Logit Tuning] Best CV PR-AUC: 0.850
+/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
+  warnings.warn(
+
+[Logit] Validation PR-AUC: 0.840 | Best-F1 thr: 0.687 (F1=0.769)
+
+=== Logit (tuned) @ thr=0.687 ===
+ROC-AUC: 0.677
+PR-AUC:  0.060  (baseline=0.030)
+Confusion matrix:
+ [[71 27]
+ [ 1  2]]
+Classification report:
+               precision    recall  f1-score   support
+
+           0      0.986     0.724     0.835        98
+           1      0.069     0.667     0.125         3
+
+    accuracy                          0.723       101
+   macro avg      0.528     0.696     0.480       101
+weighted avg      0.959     0.723     0.814       101
+
+
+[Logit+PCA Tuning]
+[Logit+PCA Tuning] Best params:
+{'clf__C': np.float64(0.4609877941534894), 'pca__n_components': 0.95}
+[Logit+PCA Tuning] Best CV PR-AUC: 0.856
+/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
+  warnings.warn(
+
+[Logit+PCA] Validation PR-AUC: 0.624 | Best-F1 thr: 0.395 (F1=0.667)
+
+=== Logit+PCA (tuned) @ thr=0.395 ===
+ROC-AUC: 0.724
+PR-AUC:  0.066  (baseline=0.030)
+Confusion matrix:
+ [[55 43]
+ [ 0  3]]
+Classification report:
+               precision    recall  f1-score   support
+
+           0      1.000     0.561     0.719        98
+           1      0.065     1.000     0.122         3
+
+    accuracy                          0.574       101
+   macro avg      0.533     0.781     0.421       101
+weighted avg      0.972     0.574     0.701       101
+
+
+[RF Tuning]
+[RF Tuning] Best params:
+{'bootstrap': True, 'max_depth': 3, 'max_features': 'sqrt', 'min_samples_leaf': 27, 'min_samples_split': 14, 'n_estimators': 1582}
+[RF Tuning] Best CV PR-AUC: 0.805
+/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
+  warnings.warn(
+
+[RF] Validation PR-AUC: 0.975 | Best-F1 thr: 0.560 (F1=0.933)
+
+=== Random Forest (tuned) @ thr=0.560 ===
+ROC-AUC: 0.721
+PR-AUC:  0.067  (baseline=0.030)
+Confusion matrix:
+ [[44 54]
+ [ 0  3]]
+Classification report:
+               precision    recall  f1-score   support
+
+           0      1.000     0.449     0.620        98
+           1      0.053     1.000     0.100         3
+
+    accuracy                          0.465       101
+   macro avg      0.526     0.724     0.360       101
+weighted avg      0.972     0.465     0.604       101
+
+
+[XGB Tuning]
+[XGB Tuning] Best params:
+{'colsample_bytree': 0.8, 'gamma': 0, 'learning_rate': 0.1, 'max_depth': 2, 'min_child_weight': 3, 'n_estimators': 696, 'reg_lambda': 1.0, 'subsample': 0.8}
+[XGB Tuning] Best CV PR-AUC: 0.677
+/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
+  warnings.warn(
+
+[XGB] Validation PR-AUC: 0.858 | Best-F1 thr: 0.213 (F1=0.857)
+
+=== XGBoost (tuned) @ thr=0.213 ===
+ROC-AUC: 0.636
+PR-AUC:  0.051  (baseline=0.030)
+Confusion matrix:
+ [[53 45]
+ [ 0  3]]
+Classification report:
+               precision    recall  f1-score   support
+
+           0      1.000     0.541     0.702        98
+           1      0.062     1.000     0.118         3
+
+    accuracy                          0.554       101
+   macro avg      0.531     0.770     0.410       101
+weighted avg      0.972     0.554     0.685       101
+
+
+[Stacking Tuning]
+[Stacking Tuning] Best params:
+{'final_estimator__C': np.float64(7.579479953348009)}
+[Stacking Tuning] Best CV PR-AUC: 0.705
+/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
+  warnings.warn(
+
+[Stacking] Validation PR-AUC: 0.975 | Best-F1 thr: 0.542 (F1=0.933)
+
+=== Stacking (tuned) @ thr=0.542 ===
+ROC-AUC: 0.714
+PR-AUC:  0.065  (baseline=0.030)
+Confusion matrix:
+ [[43 55]
+ [ 0  3]]
+Classification report:
+               precision    recall  f1-score   support
+
+           0      1.000     0.439     0.610        98
+           1      0.052     1.000     0.098         3
+
+    accuracy                          0.455       101
+   macro avg      0.526     0.719     0.354       101
+weighted avg      0.972     0.455     0.595       101
+
+
+[Summary] Validation/Test PR-AUC and thresholds
+       model    val_pr       thr   test_pr
+0      Logit  0.840074  0.687427  0.060027
+1  Logit+PCA  0.623621  0.394503  0.066270
+2         RF  0.975000  0.560254  0.067151
+3        XGB  0.857955  0.213271  0.051474
+4   Stacking  0.975000  0.542116  0.064871
+
+[Choice] Select 'RF' based on highest validation PR-AUC (0.975); test PR-AUC=0.067, thr=0.560
+
+Saved tuning results and feature importances to tuning/.
 """
