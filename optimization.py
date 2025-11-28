@@ -11,35 +11,39 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.calibration import CalibratedClassifierCV
 from xgboost import XGBClassifier
 
-from base import compute_features, FILES, H
+from base import compute_features, FILES, H, sliding_test_scores
+from calibrator import PrefitCalibratedModel
 
-def best_threshold_by_f1(y_true, y_prob):
+BETA = 0.5  # precision-oriented thresholding
+
+def best_threshold_by_fbeta(y_true, y_prob, beta=BETA):
     """
-    Return the best threshold for a given set of predictions, y_prob, which maximizes the F1-score.
-    
+    Compute the best threshold by F-beta score.
+
     Parameters
     ----------
     y_true : array-like, shape (n_samples,)
         True labels.
     y_prob : array-like, shape (n_samples,)
         Predicted probabilities.
-    
+    beta : float, optional
+        The beta parameter of the F-beta score. Default is BETA (0.5).
+
     Returns
     -------
     thr : float
         The best threshold.
-    f1 : float
-        The best F1-score.
+    fbeta : float
+        The best F-beta score.
     """
     P, R, T = precision_recall_curve(y_true, y_prob)
     if len(T) == 0:
         return 0.5, 0.0
-    F1 = (2 * P * R / (P + R + 1e-12))[:-1]
-    ix = int(np.argmax(F1))
-    return float(T[ix]), float(F1[ix])
+    FB = ((1 + beta**2) * P * R / (beta**2 * P + R + 1e-12))[:-1]
+    ix = int(np.argmax(FB))
+    return float(T[ix]), float(FB[ix])
 
 def time_cv_with_positives(X, y, n_splits=5, gap=H, min_pos=1):
     """
@@ -132,13 +136,12 @@ def main(n_iter=60, random_state=42):
     logit_space = {"clf__C": loguniform(1e-3, 10)}
     logit_search = run_search("Logit", logit_base, logit_space, X_tr, y_tr, cv_splits, n_iter, random_state)
     logit_best = logit_search.best_estimator_
-    logit_cal = CalibratedClassifierCV(logit_best, method="sigmoid", cv="prefit")
-    logit_cal.fit(X_va, y_va)
+    logit_cal = PrefitCalibratedModel(logit_best, method="sigmoid").fit(X_va, y_va)
     p_val_log = logit_cal.predict_proba(X_va)[:, 1]
-    thr_log, f1_log = best_threshold_by_f1(y_va, p_val_log)
+    thr_log, fbeta_log = best_threshold_by_fbeta(y_va, p_val_log)
     p_test_log = logit_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_log):.3f} | "
-          f"Best-F1 thr: {thr_log:.3f} (F1={f1_log:.3f})")
+          f"Best-Fβ thr: {thr_log:.3f} (Fβ={fbeta_log:.3f}, beta={BETA})")
     report_metrics("Logit (tuned)", y_te, p_test_log, thr_log)
     results.append({"model": "Logit", "val_pr": average_precision_score(y_va, p_val_log),
                     "thr": thr_log, "test_pr": average_precision_score(y_te, p_test_log)})
@@ -160,13 +163,12 @@ def main(n_iter=60, random_state=42):
     }
     pca_search = run_search("Logit+PCA", pca_logit_base, pca_logit_space, X_tr, y_tr, cv_splits, n_iter, random_state)
     pca_best = pca_search.best_estimator_
-    pca_cal = CalibratedClassifierCV(pca_best, method="sigmoid", cv="prefit")
-    pca_cal.fit(X_va, y_va)
+    pca_cal = PrefitCalibratedModel(pca_best, method="sigmoid").fit(X_va, y_va)
     p_val_pca = pca_cal.predict_proba(X_va)[:, 1]
-    thr_pca, f1_pca = best_threshold_by_f1(y_va, p_val_pca)
+    thr_pca, fbeta_pca = best_threshold_by_fbeta(y_va, p_val_pca)
     p_test_pca = pca_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Logit+PCA] Validation PR-AUC: {average_precision_score(y_va, p_val_pca):.3f} | "
-          f"Best-F1 thr: {thr_pca:.3f} (F1={f1_pca:.3f})")
+          f"Best-Fβ thr: {thr_pca:.3f} (Fβ={fbeta_pca:.3f}, beta={BETA})")
     report_metrics("Logit+PCA (tuned)", y_te, p_test_pca, thr_pca)
     results.append({"model": "Logit+PCA", "val_pr": average_precision_score(y_va, p_val_pca),
                     "thr": thr_pca, "test_pr": average_precision_score(y_te, p_test_pca)})
@@ -187,13 +189,12 @@ def main(n_iter=60, random_state=42):
     }
     rf_search = run_search("RF", rf_base, rf_space, X_tr, y_tr, cv_splits, n_iter, random_state)
     rf_best = rf_search.best_estimator_
-    rf_cal = CalibratedClassifierCV(rf_best, method="sigmoid", cv="prefit")
-    rf_cal.fit(X_va, y_va)
+    rf_cal = PrefitCalibratedModel(rf_best, method="sigmoid").fit(X_va, y_va)
     p_val_rf = rf_cal.predict_proba(X_va)[:, 1]
-    thr_rf, f1_rf = best_threshold_by_f1(y_va, p_val_rf)
+    thr_rf, fbeta_rf = best_threshold_by_fbeta(y_va, p_val_rf)
     p_test_rf = rf_cal.predict_proba(X_te)[:, 1]
     print(f"\n[RF] Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | "
-          f"Best-F1 thr: {thr_rf:.3f} (F1={f1_rf:.3f})")
+          f"Best-Fβ thr: {thr_rf:.3f} (Fβ={fbeta_rf:.3f}, beta={BETA})")
     report_metrics("Random Forest (tuned)", y_te, p_test_rf, thr_rf)
     results.append({"model": "RF", "val_pr": average_precision_score(y_va, p_val_rf),
                     "thr": thr_rf, "test_pr": average_precision_score(y_te, p_test_rf)})
@@ -221,13 +222,12 @@ def main(n_iter=60, random_state=42):
     }
     xgb_search = run_search("XGB", xgb_base, xgb_space, X_tr, y_tr, cv_splits, n_iter, random_state)
     xgb_best = xgb_search.best_estimator_
-    xgb_cal = CalibratedClassifierCV(xgb_best, method="sigmoid", cv="prefit")
-    xgb_cal.fit(X_va, y_va)
+    xgb_cal = PrefitCalibratedModel(xgb_best, method="sigmoid").fit(X_va, y_va)
     p_val_xgb = xgb_cal.predict_proba(X_va)[:, 1]
-    thr_xgb, f1_xgb = best_threshold_by_f1(y_va, p_val_xgb)
+    thr_xgb, fbeta_xgb = best_threshold_by_fbeta(y_va, p_val_xgb)
     p_test_xgb = xgb_cal.predict_proba(X_te)[:, 1]
     print(f"\n[XGB] Validation PR-AUC: {average_precision_score(y_va, p_val_xgb):.3f} | "
-          f"Best-F1 thr: {thr_xgb:.3f} (F1={f1_xgb:.3f})")
+          f"Best-Fβ thr: {thr_xgb:.3f} (Fβ={fbeta_xgb:.3f}, beta={BETA})")
     report_metrics("XGBoost (tuned)", y_te, p_test_xgb, thr_xgb)
     results.append({"model": "XGB", "val_pr": average_precision_score(y_va, p_val_xgb),
                     "thr": thr_xgb, "test_pr": average_precision_score(y_te, p_test_xgb)})
@@ -246,13 +246,12 @@ def main(n_iter=60, random_state=42):
     stack_space = {"final_estimator__C": loguniform(1e-3, 10)}
     stack_search = run_search("Stacking", stack_base, stack_space, X_tr, y_tr, cv_splits, n_iter, random_state)
     stack_best = stack_search.best_estimator_
-    stack_cal = CalibratedClassifierCV(stack_best, method="sigmoid", cv="prefit")
-    stack_cal.fit(X_va, y_va)
+    stack_cal = PrefitCalibratedModel(stack_best, method="sigmoid").fit(X_va, y_va)
     p_val_stack = stack_cal.predict_proba(X_va)[:, 1]
-    thr_stack, f1_stack = best_threshold_by_f1(y_va, p_val_stack)
+    thr_stack, fbeta_stack = best_threshold_by_fbeta(y_va, p_val_stack)
     p_test_stack = stack_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Stacking] Validation PR-AUC: {average_precision_score(y_va, p_val_stack):.3f} | "
-          f"Best-F1 thr: {thr_stack:.3f} (F1={f1_stack:.3f})")
+          f"Best-Fβ thr: {thr_stack:.3f} (Fβ={fbeta_stack:.3f}, beta={BETA})")
     report_metrics("Stacking (tuned)", y_te, p_test_stack, thr_stack)
     results.append({"model": "Stacking", "val_pr": average_precision_score(y_va, p_val_stack),
                     "thr": thr_stack, "test_pr": average_precision_score(y_te, p_test_stack)})
@@ -262,6 +261,17 @@ def main(n_iter=60, random_state=42):
     print(df_res)
     best = df_res.sort_values("val_pr", ascending=False).iloc[0]
     print(f"\n[Choice] Select '{best['model']}' based on highest validation PR-AUC ({best['val_pr']:.3f}); test PR-AUC={best['test_pr']:.3f}, thr={best['thr']:.3f}")
+
+    # Stability check on tuned models with sliding windows (uses F-beta thresholding inside)
+    print("\n[Stability] Sliding windows (20% window, 5% step) on tuned models")
+    for name, model in [("Logit", logit_best), ("Logit+PCA", pca_best), ("RF", rf_best), ("XGB", xgb_best), ("Stacking", stack_best)]:
+        st = sliding_test_scores(model, X, y, window=0.2, step=0.05)
+        if len(st) == 0:
+            print(f"{name}: not enough data for sliding windows.")
+            continue
+        m = st[["roc_auc","pr_auc","bal_acc","f1","base_rate"]].mean()
+        s = st[["roc_auc","pr_auc","bal_acc","f1","base_rate"]].std()
+        print(f"{name}: ROC-AUC {m['roc_auc']:.3f}±{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}±{s['pr_auc']:.3f} | BalAcc {m['bal_acc']:.3f}±{s['bal_acc']:.3f} | F1 {m['f1']:.3f}±{s['f1']:.3f} | base {m['base_rate']:.3f}")
 
     try:
         pd.DataFrame(logit_search.cv_results_).to_csv("tuning/logit_tuning_cv_results.csv", index=False)
@@ -298,12 +308,10 @@ Positives by split: train=29, val=8, test=3
 [Logit Tuning] Best params:
 {'clf__C': np.float64(0.005337032762603957)}
 [Logit Tuning] Best CV PR-AUC: 0.850
-/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
-  warnings.warn(
 
-[Logit] Validation PR-AUC: 0.840 | Best-F1 thr: 0.687 (F1=0.769)
+[Logit] Validation PR-AUC: 0.840 | Best-Fβ thr: 0.210 (Fβ=0.893, beta=0.5)
 
-=== Logit (tuned) @ thr=0.687 ===
+=== Logit (tuned) @ thr=0.210 ===
 ROC-AUC: 0.677
 PR-AUC:  0.060  (baseline=0.030)
 Confusion matrix:
@@ -324,12 +332,10 @@ weighted avg      0.959     0.723     0.814       101
 [Logit+PCA Tuning] Best params:
 {'clf__C': np.float64(0.4609877941534894), 'pca__n_components': 0.95}
 [Logit+PCA Tuning] Best CV PR-AUC: 0.856
-/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
-  warnings.warn(
 
-[Logit+PCA] Validation PR-AUC: 0.624 | Best-F1 thr: 0.395 (F1=0.667)
+[Logit+PCA] Validation PR-AUC: 0.624 | Best-Fβ thr: 0.235 (Fβ=0.833, beta=0.5)
 
-=== Logit+PCA (tuned) @ thr=0.395 ===
+=== Logit+PCA (tuned) @ thr=0.235 ===
 ROC-AUC: 0.724
 PR-AUC:  0.066  (baseline=0.030)
 Confusion matrix:
@@ -350,12 +356,10 @@ weighted avg      0.972     0.574     0.701       101
 [RF Tuning] Best params:
 {'bootstrap': True, 'max_depth': 3, 'max_features': 'sqrt', 'min_samples_leaf': 27, 'min_samples_split': 14, 'n_estimators': 1582}
 [RF Tuning] Best CV PR-AUC: 0.805
-/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
-  warnings.warn(
 
-[RF] Validation PR-AUC: 0.975 | Best-F1 thr: 0.560 (F1=0.933)
+[RF] Validation PR-AUC: 0.975 | Best-Fβ thr: 0.119 (Fβ=0.972, beta=0.5)
 
-=== Random Forest (tuned) @ thr=0.560 ===
+=== Random Forest (tuned) @ thr=0.119 ===
 ROC-AUC: 0.721
 PR-AUC:  0.067  (baseline=0.030)
 Confusion matrix:
@@ -376,12 +380,10 @@ weighted avg      0.972     0.465     0.604       101
 [XGB Tuning] Best params:
 {'colsample_bytree': 0.8, 'gamma': 0, 'learning_rate': 0.1, 'max_depth': 2, 'min_child_weight': 3, 'n_estimators': 696, 'reg_lambda': 1.0, 'subsample': 0.8}
 [XGB Tuning] Best CV PR-AUC: 0.677
-/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
-  warnings.warn(
 
-[XGB] Validation PR-AUC: 0.858 | Best-F1 thr: 0.213 (F1=0.857)
+[XGB] Validation PR-AUC: 0.858 | Best-Fβ thr: 0.087 (Fβ=0.937, beta=0.5)
 
-=== XGBoost (tuned) @ thr=0.213 ===
+=== XGBoost (tuned) @ thr=0.087 ===
 ROC-AUC: 0.636
 PR-AUC:  0.051  (baseline=0.030)
 Confusion matrix:
@@ -402,12 +404,10 @@ weighted avg      0.972     0.554     0.685       101
 [Stacking Tuning] Best params:
 {'final_estimator__C': np.float64(7.579479953348009)}
 [Stacking Tuning] Best CV PR-AUC: 0.705
-/Users/benjaminemily/Desktop/ESILV/S7/ML/Project/venv/lib/python3.11/site-packages/sklearn/calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.
-  warnings.warn(
 
-[Stacking] Validation PR-AUC: 0.975 | Best-F1 thr: 0.542 (F1=0.933)
+[Stacking] Validation PR-AUC: 0.975 | Best-Fβ thr: 0.110 (Fβ=0.972, beta=0.5)
 
-=== Stacking (tuned) @ thr=0.542 ===
+=== Stacking (tuned) @ thr=0.110 ===
 ROC-AUC: 0.714
 PR-AUC:  0.065  (baseline=0.030)
 Confusion matrix:
@@ -426,13 +426,20 @@ weighted avg      0.972     0.455     0.595       101
 
 [Summary] Validation/Test PR-AUC and thresholds
        model    val_pr       thr   test_pr
-0      Logit  0.840074  0.687427  0.060027
-1  Logit+PCA  0.623621  0.394503  0.066270
-2         RF  0.975000  0.560254  0.067151
-3        XGB  0.857955  0.213271  0.051474
-4   Stacking  0.975000  0.542116  0.064871
+0      Logit  0.840074  0.209738  0.060027
+1  Logit+PCA  0.623621  0.234517  0.066270
+2         RF  0.975000  0.118764  0.067151
+3        XGB  0.857955  0.086968  0.051474
+4   Stacking  0.975000  0.109636  0.064871
 
-[Choice] Select 'RF' based on highest validation PR-AUC (0.975); test PR-AUC=0.067, thr=0.560
+[Choice] Select 'RF' based on highest validation PR-AUC (0.975); test PR-AUC=0.067, thr=0.119
+
+[Stability] Sliding windows (20% window, 5% step) on tuned models
+Logit: ROC-AUC 0.928±0.085 | PR-AUC 0.682±0.315 | BalAcc 0.680±0.124 | F1 0.337±0.220 | base 0.110
+Logit+PCA: ROC-AUC 0.881±0.083 | PR-AUC 0.568±0.253 | BalAcc 0.692±0.128 | F1 0.276±0.193 | base 0.110
+RF: ROC-AUC 0.902±0.078 | PR-AUC 0.545±0.317 | BalAcc 0.739±0.123 | F1 0.331±0.233 | base 0.110
+XGB: ROC-AUC 0.876±0.088 | PR-AUC 0.428±0.232 | BalAcc 0.690±0.125 | F1 0.327±0.196 | base 0.110
+Stacking: ROC-AUC 0.909±0.065 | PR-AUC 0.548±0.268 | BalAcc 0.793±0.134 | F1 0.398±0.227 | base 0.110
 
 Saved tuning results and feature importances to tuning/.
 """

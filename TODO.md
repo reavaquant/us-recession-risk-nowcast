@@ -1,2 +1,1 @@
-- verify well compile base.py with lstm
-- optimize every model in opti.py
+- ajouter dans le code une option de sélection de seuil par précision-cible et un undersampling léger sur le train. pour gerer le desequilibre de classe

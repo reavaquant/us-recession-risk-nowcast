@@ -10,9 +10,9 @@ from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, roc_auc_score, average_precision_score, precision_recall_curve, confusion_matrix, balanced_accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.calibration import CalibratedClassifierCV
 
 from lstm import train_lstm_sequence
+from calibrator import PrefitCalibratedModel
 
 
 FILES = {
@@ -26,6 +26,7 @@ FILES = {
 }
 
 H = 6
+BETA = 0.5  # emphasize precision (F-beta with beta<1)
 
 def _load_series(path, series_name):
     """
@@ -113,30 +114,32 @@ def report_metrics(name, y_true, y_prob, threshold):
     print("Confusion matrix:\n", confusion_matrix(y_true, y_pred))
     print("Classification report:\n", classification_report(y_true, y_pred, digits=3))
 
-def best_threshold_by_f1(y_true, y_prob):
+def best_threshold_by_fbeta(y_true, y_prob, beta=BETA):
     """
-    Find the best threshold to maximize the F1-score between the true labels, y_true, and the predicted probabilities, y_prob.
+    Find the best threshold by F-beta score for a given model and data.
 
     Parameters
     ----------
-    y_true : array-like, shape (n_samples,)
-        True labels.
-    y_prob : array-like, shape (n_samples,)
-        Predicted probabilities.
+    y_true : array-like
+        True labels of the data.
+    y_prob : array-like
+        Predicted probabilities of the data.
+    beta : float, optional
+        F-beta score parameter. Defaults to 0.5.
 
     Returns
     -------
-    thr : float
-        The best threshold.
-    f1 : float
-        The best F1-score.
+    threshold : float
+        The best threshold by F-beta score.
+    fbeta : float
+        The corresponding F-beta score.
     """
     p, r, thr = precision_recall_curve(y_true, y_prob)
-    f1 = (2 * p * r / (p + r + 1e-12))[:-1]  # drop last point (no threshold)
-    if len(f1) == 0:
+    if len(thr) == 0:
         return 0.5, 0.0
-    ix = int(np.argmax(f1))
-    return float(thr[ix]), float(f1[ix])
+    fbeta = ((1 + beta**2) * p * r / (beta**2 * p + r + 1e-12))[:-1]
+    ix = int(np.argmax(fbeta))
+    return float(thr[ix]), float(fbeta[ix])
 
 def rolling_cv_scores(model, X, y, n_splits=5, gap=H):
     """
@@ -258,8 +261,8 @@ def sliding_test_scores(model, X, y, window=0.2, step=0.05):
             if len(T) == 0:
                 thr = 0.5
             else:
-                F1 = (2*P*R/(P+R+1e-12))[:-1]
-                thr = float(T[int(np.argmax(F1))])
+                FB = ((1 + BETA**2) * P * R / (BETA**2 * P + R + 1e-12))[:-1]
+                thr = float(T[int(np.argmax(FB))])
 
         p_te = m.predict_proba(X_te)[:, 1]
         y_hat = (p_te >= thr).astype(int)
@@ -322,46 +325,41 @@ def main():
         n_jobs=-1,
     )
 
-    # 4) Fit on TRAIN; choose threshold on VALIDATION (max F1)
+    # 4) Fit on TRAIN; choose threshold on VALIDATION (max F-beta for precision-leaning)
     # Logistic
     logit.fit(X_tr, y_tr)
-    logit_cal = CalibratedClassifierCV(logit, method="sigmoid", cv="prefit")
-    logit_cal.fit(X_va, y_va)
+    logit_cal = PrefitCalibratedModel(logit, method="sigmoid").fit(X_va, y_va)
     p_val_log = logit_cal.predict_proba(X_va)[:, 1]
-    thr_log, f1_log = best_threshold_by_f1(y_va, p_val_log)
-    print(f"\n[Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_log):.3f} | Best-F1 thr: {thr_log:.3f} (F1={f1_log:.3f})")
+    thr_log, fbeta_log = best_threshold_by_fbeta(y_va, p_val_log)
+    print(f"\n[Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_log):.3f} | Best-Fβ thr: {thr_log:.3f} (Fβ={fbeta_log:.3f}, beta={BETA})")
 
     # Logistic + PCA
     pca_logit.fit(X_tr, y_tr)
-    pcal_cal = CalibratedClassifierCV(pca_logit, method="sigmoid", cv="prefit")
-    pcal_cal.fit(X_va, y_va)
+    pcal_cal = PrefitCalibratedModel(pca_logit, method="sigmoid").fit(X_va, y_va)
     p_val_pca = pcal_cal.predict_proba(X_va)[:, 1]
-    thr_pca, f1_pca = best_threshold_by_f1(y_va, p_val_pca)
-    print(f"[Logit+PCA] Validation PR-AUC: {average_precision_score(y_va, p_val_pca):.3f} | Best-F1 thr: {thr_pca:.3f} (F1={f1_pca:.3f})")
+    thr_pca, fbeta_pca = best_threshold_by_fbeta(y_va, p_val_pca)
+    print(f"[Logit+PCA] Validation PR-AUC: {average_precision_score(y_va, p_val_pca):.3f} | Best-Fβ thr: {thr_pca:.3f} (Fβ={fbeta_pca:.3f}, beta={BETA})")
 
     # XGB (early stopping on validation)
     xgb.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
-    xgb_cal = CalibratedClassifierCV(xgb, method="sigmoid", cv="prefit")
-    xgb_cal.fit(X_va, y_va)
+    xgb_cal = PrefitCalibratedModel(xgb, method="sigmoid").fit(X_va, y_va)
     p_val_xgb = xgb_cal.predict_proba(X_va)[:, 1]
-    thr_xgb, f1_xgb = best_threshold_by_f1(y_va, p_val_xgb)
-    print(f"[XGB] Validation PR-AUC: {average_precision_score(y_va, p_val_xgb):.3f} | Best-F1 thr: {thr_xgb:.3f} (F1={f1_xgb:.3f})")
+    thr_xgb, fbeta_xgb = best_threshold_by_fbeta(y_va, p_val_xgb)
+    print(f"[XGB] Validation PR-AUC: {average_precision_score(y_va, p_val_xgb):.3f} | Best-Fβ thr: {thr_xgb:.3f} (Fβ={fbeta_xgb:.3f}, beta={BETA})")
 
     # RF
     rf.fit(X_tr, y_tr)
-    rf_cal = CalibratedClassifierCV(rf, method="sigmoid", cv="prefit")
-    rf_cal.fit(X_va, y_va)
+    rf_cal = PrefitCalibratedModel(rf, method="sigmoid").fit(X_va, y_va)
     p_val_rf = rf_cal.predict_proba(X_va)[:, 1]
-    thr_rf, f1_rf = best_threshold_by_f1(y_va, p_val_rf)
-    print(f"[RF]  Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | Best-F1 thr: {thr_rf:.3f} (F1={f1_rf:.3f})")
+    thr_rf, fbeta_rf = best_threshold_by_fbeta(y_va, p_val_rf)
+    print(f"[RF]  Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | Best-Fβ thr: {thr_rf:.3f} (Fβ={fbeta_rf:.3f}, beta={BETA})")
 
     # Stacking ensemble (RF + XGB -> Logistic)
     stacking.fit(X_tr, y_tr)
-    stack_cal = CalibratedClassifierCV(stacking, method="sigmoid", cv="prefit")
-    stack_cal.fit(X_va, y_va)
+    stack_cal = PrefitCalibratedModel(stacking, method="sigmoid").fit(X_va, y_va)
     p_val_stack = stack_cal.predict_proba(X_va)[:, 1]
-    thr_stack, f1_stack = best_threshold_by_f1(y_va, p_val_stack)
-    print(f"[Stacking RF+XGB->Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_stack):.3f} | Best-F1 thr: {thr_stack:.3f} (F1={f1_stack:.3f})")
+    thr_stack, fbeta_stack = best_threshold_by_fbeta(y_va, p_val_stack)
+    print(f"[Stacking RF+XGB->Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_stack):.3f} | Best-Fβ thr: {thr_stack:.3f} (Fβ={fbeta_stack:.3f}, beta={BETA})")
 
 
     report_metrics("Logistic Regression", y_te, logit_cal.predict_proba(X_te)[:, 1], thr_log)
@@ -397,7 +395,7 @@ def main():
             print("[LSTM] Not enough positive/negative examples in the test window to compute full metrics.")
         else:
             report_metrics("LSTM (sequence)", lstm_res["test_targets"], lstm_res["test_probs"], lstm_res["threshold"])
-        print("[LSTM] Note: very few positives; validation can look perfect but test recall is low, interpret with caution.")
+        print("[LSTM] Note: very few positives; validation can look perfect but test recall is low, interpret with caution. We will not optimise LSTM hyperparameters as it too unstable.")
     except Exception as e:
         print(f"[LSTM] skipped due to error: {e}", flush=True)
 
@@ -452,30 +450,30 @@ OUTPUT:
 Samples: total=505 | train=303 | val=101 | test=101
 Positives by split: train=29, val=8, test=3
 
-[Logit] Validation PR-AUC: 0.590 | Best-F1 thr: 0.518 (F1=0.615)
-[Logit+PCA] Validation PR-AUC: 0.633 | Best-F1 thr: 0.160 (F1=0.714)
-[XGB] Validation PR-AUC: 0.889 | Best-F1 thr: 0.444 (F1=0.941)
-[RF]  Validation PR-AUC: 0.975 | Best-F1 thr: 0.266 (F1=0.933)
-[Stacking RF+XGB->Logit] Validation PR-AUC: 0.986 | Best-F1 thr: 0.240 (F1=0.941)
+[Logit] Validation PR-AUC: 0.590 | Best-Fβ thr: 0.223 (Fβ=0.750, beta=0.5)
+[Logit+PCA] Validation PR-AUC: 0.633 | Best-Fβ thr: 0.093 (Fβ=0.781, beta=0.5)
+[XGB] Validation PR-AUC: 0.889 | Best-Fβ thr: 0.079 (Fβ=0.909, beta=0.5)
+[RF]  Validation PR-AUC: 0.975 | Best-Fβ thr: 0.107 (Fβ=0.972, beta=0.5)
+[Stacking RF+XGB->Logit] Validation PR-AUC: 0.986 | Best-Fβ thr: 0.088 (Fβ=0.972, beta=0.5)
 
-=== Logistic Regression @ threshold=0.518 ===
+=== Logistic Regression @ threshold=0.223 ===
 ROC-AUC: 0.711
 PR-AUC: 0.064  (baseline=0.030)
 Confusion matrix:
- [[33 65]
+ [[47 51]
  [ 0  3]]
 Classification report:
                precision    recall  f1-score   support
 
-           0      1.000     0.337     0.504        98
-           1      0.044     1.000     0.085         3
+           0      1.000     0.480     0.648        98
+           1      0.056     1.000     0.105         3
 
-    accuracy                          0.356       101
-   macro avg      0.522     0.668     0.294       101
-weighted avg      0.972     0.356     0.491       101
+    accuracy                          0.495       101
+   macro avg      0.528     0.740     0.377       101
+weighted avg      0.972     0.495     0.632       101
 
 
-=== XGBoost @ threshold=0.444 ===
+=== XGBoost @ threshold=0.079 ===
 ROC-AUC: 0.653
 PR-AUC: 0.075  (baseline=0.030)
 Confusion matrix:
@@ -492,7 +490,7 @@ Classification report:
 weighted avg      0.972     0.416     0.555       101
 
 
-=== Random Forest @ threshold=0.266 ===
+=== Random Forest @ threshold=0.107 ===
 ROC-AUC: 0.684
 PR-AUC: 0.059  (baseline=0.030)
 Confusion matrix:
@@ -509,7 +507,7 @@ Classification report:
 weighted avg      0.972     0.495     0.632       101
 
 
-=== Logistic Regression + PCA @ threshold=0.160 ===
+=== Logistic Regression + PCA @ threshold=0.093 ===
 ROC-AUC: 0.731
 PR-AUC: 0.068  (baseline=0.030)
 Confusion matrix:
@@ -526,54 +524,58 @@ Classification report:
 weighted avg      0.972     0.337     0.469       101
 
 
-=== Stacking (RF+XGB -> Logit) @ threshold=0.240 ===
+=== Stacking (RF+XGB -> Logit) @ threshold=0.088 ===
 ROC-AUC: 0.667
 PR-AUC: 0.056  (baseline=0.030)
 Confusion matrix:
- [[29 69]
+ [[46 52]
  [ 0  3]]
 Classification report:
                precision    recall  f1-score   support
 
-           0      1.000     0.296     0.457        98
-           1      0.042     1.000     0.080         3
+           0      1.000     0.469     0.639        98
+           1      0.055     1.000     0.103         3
 
-    accuracy                          0.317       101
-   macro avg      0.521     0.648     0.268       101
-weighted avg      0.972     0.317     0.446       101
+    accuracy                          0.485       101
+   macro avg      0.527     0.735     0.371       101
+weighted avg      0.972     0.485     0.623       101
 
 
 [Summary] Validation/Test PR-AUC and thresholds
           model    val_pr   val_thr   test_pr
-0         Logit  0.590196  0.518338  0.063657
-1     Logit+PCA  0.633289  0.160230  0.067621
-2  RandomForest  0.975000  0.266466  0.058971
-3       XGBoost  0.888889  0.444092  0.075000
-4      Stacking  0.986111  0.239919  0.056116
+0         Logit  0.590196  0.222842  0.063657
+1     Logit+PCA  0.633289  0.093281  0.067621
+2  RandomForest  0.975000  0.107119  0.058971
+3       XGBoost  0.888889  0.079323  0.075000
+4      Stacking  0.986111  0.088107  0.056116
 
 [MAIN] Starting LSTM...
 [LSTM] start training: max_epochs=20, batches/epoch=5
-[LSTM] epoch 000 val_pr=0.1747 best=0.1747 bad=0
-[LSTM] epoch 001 val_pr=0.1672 best=0.1747 bad=1
-[LSTM] epoch 002 val_pr=0.1644 best=0.1747 bad=2
-[LSTM] epoch 003 val_pr=0.1705 best=0.1747 bad=3
-[LSTM seq2one] Validation PR-AUC: 0.195 | Best-F1 thr: 0.200 (F1=0.296) | calibrated=True
+[LSTM] epoch 000 val_pr=0.1339 best=0.1339 bad=0
+[LSTM] epoch 001 val_pr=0.1513 best=0.1513 bad=0
+[LSTM] epoch 002 val_pr=0.1784 best=0.1784 bad=0
+[LSTM] epoch 003 val_pr=0.2134 best=0.2134 bad=0
+[LSTM] epoch 004 val_pr=0.2481 best=0.2481 bad=0
+[LSTM] epoch 005 val_pr=0.2426 best=0.2481 bad=1
+[LSTM] epoch 006 val_pr=0.2309 best=0.2481 bad=2
+[LSTM] epoch 007 val_pr=0.2313 best=0.2481 bad=3
+[LSTM seq2one] Validation PR-AUC: 0.277 | Best-F1 thr: 0.250 (F1=0.421) | calibrated=True
 
-=== LSTM (sequence) @ threshold=0.200 ===
-ROC-AUC: 0.781
-PR-AUC: 0.070  (baseline=0.030)
+=== LSTM (sequence) @ threshold=0.250 ===
+ROC-AUC: 0.095
+PR-AUC: 0.023  (baseline=0.030)
 Confusion matrix:
- [[58 40]
- [ 0  3]]
+ [[72 26]
+ [ 3  0]]
 Classification report:
                precision    recall  f1-score   support
 
-         0.0      1.000     0.592     0.744        98
-         1.0      0.070     1.000     0.130         3
+         0.0      0.960     0.735     0.832        98
+         1.0      0.000     0.000     0.000         3
 
-    accuracy                          0.604       101
-   macro avg      0.535     0.796     0.437       101
-weighted avg      0.972     0.604     0.725       101
+    accuracy                          0.713       101
+   macro avg      0.480     0.367     0.416       101
+weighted avg      0.931     0.713     0.808       101
 
 [LSTM] Note: very few positives; validation can look perfect but test recall is low, interpret with caution. We will not optimise LSTM hyperparameters as it too unstable.
 
@@ -584,9 +586,9 @@ RF: ROC-AUC 0.947±0.058 | PR-AUC 0.821±0.123 | base 0.092
 Logit+PCA: ROC-AUC 0.786±0.150 | PR-AUC 0.568±0.125 | base 0.092
 
 -- Sliding window tests (20% window, 5% step) --
-Logit (sliding): ROC-AUC 0.865±0.074 | PR-AUC 0.529±0.246 | BalAcc 0.632±0.097 | F1 0.218±0.186 | base 0.110
-XGB (sliding): ROC-AUC 0.846±0.089 | PR-AUC 0.375±0.263 | BalAcc 0.709±0.114 | F1 0.329±0.165 | base 0.110
-RF (sliding): ROC-AUC 0.901±0.076 | PR-AUC 0.530±0.269 | BalAcc 0.781±0.104 | F1 0.375±0.228 | base 0.110
-Logit+PCA (sliding): ROC-AUC 0.888±0.102 | PR-AUC 0.621±0.310 | BalAcc 0.722±0.128 | F1 0.320±0.213 | base 0.110
-Stacking (sliding): ROC-AUC 0.890±0.082 | PR-AUC 0.486±0.265 | BalAcc 0.746±0.118 | F1 0.377±0.229 | base 0.110
+Logit (sliding): ROC-AUC 0.865±0.074 | PR-AUC 0.529±0.246 | BalAcc 0.646±0.146 | F1 0.206±0.205 | base 0.110
+XGB (sliding): ROC-AUC 0.846±0.089 | PR-AUC 0.375±0.263 | BalAcc 0.663±0.115 | F1 0.282±0.204 | base 0.110
+RF (sliding): ROC-AUC 0.901±0.076 | PR-AUC 0.530±0.269 | BalAcc 0.773±0.130 | F1 0.353±0.228 | base 0.110
+Logit+PCA (sliding): ROC-AUC 0.888±0.102 | PR-AUC 0.621±0.310 | BalAcc 0.730±0.147 | F1 0.314±0.215 | base 0.110
+Stacking (sliding): ROC-AUC 0.890±0.082 | PR-AUC 0.486±0.265 | BalAcc 0.708±0.134 | F1 0.355±0.232 | base 0.110
 """
