@@ -291,15 +291,15 @@ def main():
         ("clf", LogisticRegression(class_weight="balanced", max_iter=5000, C=0.5, solver="lbfgs", random_state=42)),
     ])
     rf = RandomForestClassifier(
-        n_estimators=1000, max_depth=6, min_samples_leaf=10,
+        n_estimators=200, max_depth=6, min_samples_leaf=10,
         class_weight="balanced_subsample", random_state=42, n_jobs=-1
     )
     pos, neg = int((y_tr==1).sum()), int((y_tr==0).sum())
     xgb = XGBClassifier(
-        n_estimators=2000, learning_rate=0.02, max_depth=3,
+        n_estimators=200, learning_rate=0.02, max_depth=3,
         subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
         scale_pos_weight=neg/max(pos,1), tree_method="hist",
-        eval_metric="aucpr", early_stopping_rounds=200,random_state=42
+        eval_metric="aucpr", early_stopping_rounds=20,random_state=42
     )
     stacking = StackingClassifier(
         estimators=[
@@ -358,16 +358,17 @@ def main():
             i_tr=i_tr,
             i_va=i_va,
             lookback=18,
-            hidden_size=32,
+            hidden_size=16,
             num_layers=1,
             dropout=0.15,
             lr=1e-3,
             batch_size=32,
-            max_epochs=200,
-            patience=10,
+            max_epochs=50,
+            patience=5,
             use_focal=True,
             focal_alpha=0.25,
             focal_gamma=2.0,
+            min_delta=1e-3
         )
         print(f"\n[LSTM seq2one] Validation PR-AUC: {lstm_res['val_pr_auc']:.3f} | "
               f"Best-F1 thr: {lstm_res['threshold']:.3f} (F1={lstm_res['val_f1']:.3f}) | "
@@ -381,14 +382,14 @@ def main():
 
     # Robustness: rolling CV on first 80% (train+val)
     X80, y80 = X.iloc[:i_va], y.iloc[:i_va]
-    cv_log = rolling_cv_scores(logit, X80, y80, n_splits=5, gap=H)
-    cv_xgb = rolling_cv_scores(xgb, X80, y80, n_splits=5, gap=H)
-    cv_rf = rolling_cv_scores(rf, X80, y80, n_splits=5, gap=H)
-    cvlogpca = rolling_cv_scores(pca_logit, X80, y80, n_splits=5, gap=H)
-    cv_stack = rolling_cv_scores(stacking, X80, y80, n_splits=5, gap=H)
+    cv_log = rolling_cv_scores(logit, X80, y80, n_splits=3, gap=H)
+    cv_xgb = rolling_cv_scores(xgb, X80, y80, n_splits=3, gap=H)
+    cv_rf = rolling_cv_scores(rf, X80, y80, n_splits=3, gap=H)
+    cvlogpca = rolling_cv_scores(pca_logit, X80, y80, n_splits=3, gap=H)
+    cv_stack = rolling_cv_scores(stacking, X80, y80, n_splits=3, gap=H)
 
     print("\n-- Rolling CV (mean ± std) on first 80% --")
-    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca), ("Stacking", cv_stack)]:
+    for name, dfcv in [("Logit", cv_log), ("XGB", cv_xgb), ("RF", cv_rf), ("Logit+PCA", cvlogpca)]:
         m = dfcv[["roc_auc","pr_auc","base_rate"]].mean()
         s = dfcv[["roc_auc","pr_auc","base_rate"]].std()
         print(f"{name}: ROC-AUC {m['roc_auc']:.3f}±{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}±{s['pr_auc']:.3f} | base {m['base_rate']:.3f}")

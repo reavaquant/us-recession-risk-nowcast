@@ -179,7 +179,7 @@ def train_lstm_sequence(
     if len(X_tr_seq) == 0 or len(X_va_seq) == 0 or len(X_te_seq) == 0:
         raise RuntimeError("Not enough sequential data to build train/val/test LSTM splits.")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     model = LSTMClassifier(input_size=X.shape[1], hidden_size=hidden_size, num_layers=num_layers, dropout=dropout)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
