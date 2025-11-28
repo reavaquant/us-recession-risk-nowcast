@@ -229,14 +229,19 @@ def sliding_test_scores(model, X, y, window=0.2, step=0.05):
         i_split = int(len(X_tr) * 0.8)
         X_tr_in, y_tr_in = X_tr.iloc[:i_split], y_tr.iloc[:i_split]
         X_val_in, y_val_in = X_tr.iloc[i_split:], y_tr.iloc[i_split:]
+        has_both_val_classes = y_val_in.nunique() > 1
 
-        # --- fit on internal train (clone)
         m = clone(model)
         if isinstance(m, XGBClassifier):
-            m.set_params(eval_metric="aucpr", early_stopping_rounds=50)
-            m.fit(X_tr_in, y_tr_in,
-                  eval_set=[(X_val_in, y_val_in)],
-                  verbose=False)
+            m.set_params(eval_metric="aucpr")
+            if has_both_val_classes:
+                m.set_params(early_stopping_rounds=50)
+                m.fit(X_tr_in, y_tr_in,
+                      eval_set=[(X_val_in, y_val_in)],
+                      verbose=False)
+            else:
+                m.set_params(early_stopping_rounds=None)
+                m.fit(X_tr_in, y_tr_in, verbose=False)
         else:
             try:
                 m.set_params(early_stopping_rounds=None)
@@ -244,14 +249,13 @@ def sliding_test_scores(model, X, y, window=0.2, step=0.05):
                 pass
             m.fit(X_tr_in, y_tr_in)
 
-        # --- choose threshold by F1 on internal val
-        p_val = m.predict_proba(X_val_in)[:, 1]
-        P, R, T = precision_recall_curve(y_val_in, p_val)
-        if len(T) == 0:
-            thr = 0.5
+        if not has_both_val_classes:
+            thr = 0.5  # pas de PR-curve possible, on prend un seuil neutre
         else:
-            F1 = (2*P*R/(P+R+1e-12))[:-1]
-            thr = float(T[int(np.argmax(F1))])
+            p_val = m.predict_proba(X_val_in)[:, 1]
+            P, R, T = precision_recall_curve(y_val_in, p_val)
+            thr = 0.5 if len(T) == 0 else float(T[int(np.argmax((2*P*R/(P+R+1e-12))[:-1]))])
+
 
         p_te = m.predict_proba(X_te)[:, 1]
         y_hat = (p_te >= thr).astype(int)
@@ -350,35 +354,18 @@ def main():
     report_metrics("Random Forest", y_te, rf.predict_proba(X_te)[:, 1], thr_rf)
     report_metrics("Logistic Regression + PCA", y_te, pca_logit.predict_proba(X_te)[:, 1], thr_pca)
     report_metrics("Stacking (RF+XGB -> Logit)", y_te, stacking.predict_proba(X_te)[:, 1], thr_stack)
-
+    print("\n[MAIN] Starting LSTM...", flush=True)
     try:
-        lstm_res = train_lstm_sequence(
-            X,
-            y,
-            i_tr=i_tr,
-            i_va=i_va,
-            lookback=18,
-            hidden_size=16,
-            num_layers=1,
-            dropout=0.15,
-            lr=1e-3,
-            batch_size=32,
-            max_epochs=50,
-            patience=5,
-            use_focal=True,
-            focal_alpha=0.25,
-            focal_gamma=2.0,
-            min_delta=1e-3
-        )
-        print(f"\n[LSTM seq2one] Validation PR-AUC: {lstm_res['val_pr_auc']:.3f} | "
-              f"Best-F1 thr: {lstm_res['threshold']:.3f} (F1={lstm_res['val_f1']:.3f}) | "
-              f"calibrated={lstm_res['calibrated']}")
+        lstm_res = train_lstm_sequence(X, y, i_tr=i_tr, i_va=i_va, lookback=18, hidden_size=16, num_layers=1, dropout=0.1, lr=1e-3, batch_size=64, max_epochs=20, patience=3)
+        print(f"[LSTM seq2one] Validation PR-AUC: {lstm_res['val_pr_auc']:.3f} | "
+          f"Best-F1 thr: {lstm_res['threshold']:.3f} (F1={lstm_res['val_f1']:.3f}) | "
+          f"calibrated={lstm_res['calibrated']}", flush=True)
         if len(np.unique(lstm_res["test_targets"])) < 2:
             print("[LSTM] Not enough positive/negative examples in the test window to compute full metrics.")
         else:
             report_metrics("LSTM (sequence)", lstm_res["test_targets"], lstm_res["test_probs"], lstm_res["threshold"])
     except Exception as e:
-        print(f"[LSTM] skipped due to error: {e}")
+        print(f"[LSTM] skipped due to error: {e}", flush=True)
 
     # Robustness: rolling CV on first 80% (train+val)
     X80, y80 = X.iloc[:i_va], y.iloc[:i_va]

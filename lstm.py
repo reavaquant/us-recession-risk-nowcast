@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+torch.set_num_threads(1)
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
@@ -24,11 +25,31 @@ class SequenceDataset(Dataset):
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
+        """
+        Initialize the focal loss module.
+
+        Parameters:
+        alpha (float, optional): scaling factor for positive samples. Defaults to 0.25.
+        gamma (float, optional): scaling factor for hard samples. Defaults to 2.0.
+
+        Returns:
+        None
+        """
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
 
     def forward(self, logits, targets):
+        """
+        Compute the focal loss given logits and targets.
+
+        Parameters:
+        logits (torch.tensor): input logits
+        targets (torch.tensor): target labels
+
+        Returns:
+        torch.tensor: the computed focal loss
+        """
         probs = torch.sigmoid(logits)
         ce = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
         p_t = probs * targets + (1 - probs) * (1 - targets)
@@ -38,6 +59,15 @@ class FocalLoss(nn.Module):
 
 class LSTMClassifier(nn.Module):
     def __init__(self, input_size, hidden_size=64, num_layers=1, dropout=0.2):
+        """
+        Initialize LSTMClassifier.
+
+        Parameters:
+        input_size (int): input size of LSTM
+        hidden_size (int, optional): hidden size of LSTM. Defaults to 64.
+        num_layers (int, optional): number of LSTM layers. Defaults to 1.
+        dropout (float, optional): dropout rate of LSTM. Defaults to 0.2.
+        """
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -50,12 +80,44 @@ class LSTMClassifier(nn.Module):
         self.fc = nn.Linear(hidden_size, 1)
 
     def forward(self, x):
+        """
+        Forward pass of the LSTM model.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input sequence of shape (batch_size, seq_len, input_size)
+
+        Returns
+        -------
+        logits : torch.Tensor
+            Output probabilities of shape (batch_size, seq_len)
+        """
         out, _ = self.lstm(x)
         last_hidden = out[:, -1, :]
         logits = self.fc(self.dropout(last_hidden))
         return logits.squeeze(1)
 
 def _predict_loader(model, loader, device):
+    """
+    Predict probabilities and targets for a given model and loader.
+
+    Parameters
+    ----------
+    model : nn.Module
+        The model to predict with.
+    loader : DataLoader
+        The loader to iterate over.
+    device : torch.device
+        The device to run the predictions on.
+
+    Returns
+    -------
+    probs : np.ndarray
+        The predicted probabilities.
+    targets : np.ndarray
+        The true targets.
+    """
     probs, targets = [], []
     model.eval()
     with torch.no_grad():
@@ -137,28 +199,49 @@ def make_sequence_arrays(X, y, lookback):
         timestamps.append(X.index[i])
     return np.stack(seq_X), np.array(seq_y), np.array(positions), np.array(timestamps)
 
-def train_lstm_sequence(
-    X,
-    y,
-    i_tr,
-    i_va,
-    lookback=18,
-    hidden_size=64,
-    num_layers=1,
-    dropout=0.1,
-    lr=1e-3,
-    batch_size=32,
-    max_epochs=200,
-    patience=20,
-    min_delta=1e-4,
-    use_focal=True,
-    focal_alpha=0.25,
-    focal_gamma=2.0,
-):
+def train_lstm_sequence(X, y, i_tr, i_va, lookback=18, hidden_size=16, num_layers=1, dropout=0.1, lr=1e-3, batch_size=32, max_epochs=50, patience=5, min_delta=1e-3, use_focal=True, focal_alpha=0.25, focal_gamma=2.0,):
     """
-    Train a sequence-to-one LSTM with imbalance-aware loss and isotonic calibration.
+    Train an LSTM model with the given hyperparameters on the given sequential data.
 
-    Returns a dict with validation/test predictions, threshold, and calibration info.
+    Parameters
+    ----------
+    X : pd.DataFrame
+        Feature matrix (time ordered).
+    y : pd.Series
+        Binary labels aligned with X.
+    i_tr : int
+        Index of the last training sample.
+    i_va : int
+        Index of the last validation sample.
+    lookback : int, optional
+        Number of past steps to include in each sequence. Default is 18.
+    hidden_size : int, optional
+        Number of hidden units in the LSTM layer. Default is 16.
+    num_layers : int, optional
+        Number of LSTM layers. Default is 1.
+    dropout : float, optional
+        Dropout rate for the LSTM layer. Default is 0.1.
+    lr : float, optional
+        Learning rate for the Adam optimizer. Default is 1e-3.
+    batch_size : int, optional
+        Batch size for the Adam optimizer. Default is 32.
+    max_epochs : int, optional
+        Maximum number of epochs to train the model. Default is 50.
+    patience : int, optional
+        Number of epochs to wait for improvement before stopping the training. Default is 5.
+    min_delta : float, optional
+        Minimum improvement in the validation set required to update the best model. Default is 1e-3.
+    use_focal : bool, optional
+        Whether to use focal loss. Default is True.
+    focal_alpha : float, optional
+        Alpha parameter for focal loss. Default is 0.25.
+    focal_gamma : float, optional
+        Gamma parameter for focal loss. Default is 2.0.
+
+    Returns
+    -------
+    dict
+        Dictionary containing the training history, best validation probabilities, and best validation labels.
     """
     if i_tr <= lookback:
         raise ValueError("lookback is too large compared to the training window.")
@@ -201,7 +284,8 @@ def train_lstm_sequence(
     best_pr = -np.inf
     bad_epochs = 0
 
-    for _ in range(max_epochs):
+    print(f"[LSTM] start training: max_epochs={max_epochs}, batches/epoch={len(train_loader)}", flush=True)
+    for epoch in range(max_epochs):
         model.train()
         for xb, yb in train_loader:
             xb = xb.to(device)
@@ -223,6 +307,8 @@ def train_lstm_sequence(
             best_val_probs, best_val_targets = val_probs, val_targets
         else:
             bad_epochs += 1
+        if epoch % 1 == 0:  # <- chaque epoch
+            print(f"[LSTM] epoch {epoch:03d} val_pr={val_pr:.4f} best={best_pr:.4f} bad={bad_epochs}", flush=True)
         if bad_epochs >= patience:
             break
 
