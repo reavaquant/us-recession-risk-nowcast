@@ -442,4 +442,12 @@ XGB: ROC-AUC 0.876±0.088 | PR-AUC 0.428±0.232 | BalAcc 0.690±0.125 | F1 0.327
 Stacking: ROC-AUC 0.909±0.065 | PR-AUC 0.548±0.268 | BalAcc 0.793±0.134 | F1 0.398±0.227 | base 0.110
 
 Saved tuning results and feature importances to tuning/.
+
+
+CONCLUSION 1:
+Validation PR-AUC looks great (RF/Stacking ~0.975), but the tiny test set (3 positives) sits near baseline (PR-AUC 0.05 ~ 0.067) with recall 1.0 and precision ~5 to 7%. Even with Fβ=0.5 (precision-leaning), the test is too noisy due to the scarcity of positives.
+Sliding windows give a more credible picture: PR-AUC means ~0.43 (XGB) to ~0.68 (Logit), F1 around 0.28–0.40. Stacking has the best mean F1 (~0.398) and solid balanced accuracy; Logit has the best mean PR-AUC (~0.682) but lower F1.
+Practical conclusion: report sliding/rolling metrics instead of the tiny test. Pick a simple/stable calibrated model (Logit or RF), or Stacking if you favor the top sliding F1, and use a higher threshold to cut false positives.
+the real issue is data volume/imbalance.
+SO w'll add an option to select the threshold by a target precision, and introduce light undersampling on the training set (train only, never val/test) to stabilize fits on the imbalanced data.
 """
