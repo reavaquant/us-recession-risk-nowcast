@@ -141,7 +141,7 @@ def main(n_iter=60, random_state=42):
     thr_log, fbeta_log = best_threshold_by_fbeta(y_va, p_val_log)
     p_test_log = logit_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Logit] Validation PR-AUC: {average_precision_score(y_va, p_val_log):.3f} | "
-          f"Best-Fβ thr: {thr_log:.3f} (Fβ={fbeta_log:.3f}, beta={BETA})")
+          f"Best-Fbeta thr: {thr_log:.3f} (Fbeta={fbeta_log:.3f}, beta={BETA})")
     report_metrics("Logit (tuned)", y_te, p_test_log, thr_log)
     results.append({"model": "Logit", "val_pr": average_precision_score(y_va, p_val_log),
                     "thr": thr_log, "test_pr": average_precision_score(y_te, p_test_log)})
@@ -168,7 +168,7 @@ def main(n_iter=60, random_state=42):
     thr_pca, fbeta_pca = best_threshold_by_fbeta(y_va, p_val_pca)
     p_test_pca = pca_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Logit+PCA] Validation PR-AUC: {average_precision_score(y_va, p_val_pca):.3f} | "
-          f"Best-Fβ thr: {thr_pca:.3f} (Fβ={fbeta_pca:.3f}, beta={BETA})")
+          f"Best-Fbeta thr: {thr_pca:.3f} (Fbeta={fbeta_pca:.3f}, beta={BETA})")
     report_metrics("Logit+PCA (tuned)", y_te, p_test_pca, thr_pca)
     results.append({"model": "Logit+PCA", "val_pr": average_precision_score(y_va, p_val_pca),
                     "thr": thr_pca, "test_pr": average_precision_score(y_te, p_test_pca)})
@@ -194,7 +194,7 @@ def main(n_iter=60, random_state=42):
     thr_rf, fbeta_rf = best_threshold_by_fbeta(y_va, p_val_rf)
     p_test_rf = rf_cal.predict_proba(X_te)[:, 1]
     print(f"\n[RF] Validation PR-AUC: {average_precision_score(y_va, p_val_rf):.3f} | "
-          f"Best-Fβ thr: {thr_rf:.3f} (Fβ={fbeta_rf:.3f}, beta={BETA})")
+          f"Best-Fbeta thr: {thr_rf:.3f} (Fbeta={fbeta_rf:.3f}, beta={BETA})")
     report_metrics("Random Forest (tuned)", y_te, p_test_rf, thr_rf)
     results.append({"model": "RF", "val_pr": average_precision_score(y_va, p_val_rf),
                     "thr": thr_rf, "test_pr": average_precision_score(y_te, p_test_rf)})
@@ -227,7 +227,7 @@ def main(n_iter=60, random_state=42):
     thr_xgb, fbeta_xgb = best_threshold_by_fbeta(y_va, p_val_xgb)
     p_test_xgb = xgb_cal.predict_proba(X_te)[:, 1]
     print(f"\n[XGB] Validation PR-AUC: {average_precision_score(y_va, p_val_xgb):.3f} | "
-          f"Best-Fβ thr: {thr_xgb:.3f} (Fβ={fbeta_xgb:.3f}, beta={BETA})")
+          f"Best-Fbeta thr: {thr_xgb:.3f} (Fbeta={fbeta_xgb:.3f}, beta={BETA})")
     report_metrics("XGBoost (tuned)", y_te, p_test_xgb, thr_xgb)
     results.append({"model": "XGB", "val_pr": average_precision_score(y_va, p_val_xgb),
                     "thr": thr_xgb, "test_pr": average_precision_score(y_te, p_test_xgb)})
@@ -251,7 +251,7 @@ def main(n_iter=60, random_state=42):
     thr_stack, fbeta_stack = best_threshold_by_fbeta(y_va, p_val_stack)
     p_test_stack = stack_cal.predict_proba(X_te)[:, 1]
     print(f"\n[Stacking] Validation PR-AUC: {average_precision_score(y_va, p_val_stack):.3f} | "
-          f"Best-Fβ thr: {thr_stack:.3f} (Fβ={fbeta_stack:.3f}, beta={BETA})")
+          f"Best-Fbeta thr: {thr_stack:.3f} (Fbeta={fbeta_stack:.3f}, beta={BETA})")
     report_metrics("Stacking (tuned)", y_te, p_test_stack, thr_stack)
     results.append({"model": "Stacking", "val_pr": average_precision_score(y_va, p_val_stack),
                     "thr": thr_stack, "test_pr": average_precision_score(y_te, p_test_stack)})
@@ -271,7 +271,7 @@ def main(n_iter=60, random_state=42):
             continue
         m = st[["roc_auc","pr_auc","bal_acc","f1","base_rate"]].mean()
         s = st[["roc_auc","pr_auc","bal_acc","f1","base_rate"]].std()
-        print(f"{name}: ROC-AUC {m['roc_auc']:.3f}±{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}±{s['pr_auc']:.3f} | BalAcc {m['bal_acc']:.3f}±{s['bal_acc']:.3f} | F1 {m['f1']:.3f}±{s['f1']:.3f} | base {m['base_rate']:.3f}")
+        print(f"{name}: ROC-AUC {m['roc_auc']:.3f}+/-{s['roc_auc']:.3f} | PR-AUC {m['pr_auc']:.3f}+/-{s['pr_auc']:.3f} | BalAcc {m['bal_acc']:.3f}+/-{s['bal_acc']:.3f} | F1 {m['f1']:.3f}+/-{s['f1']:.3f} | base {m['base_rate']:.3f}")
 
     try:
         pd.DataFrame(logit_search.cv_results_).to_csv("tuning/logit_tuning_cv_results.csv", index=False)
@@ -309,7 +309,7 @@ Positives by split: train=29, val=8, test=3
 {'clf__C': np.float64(0.005337032762603957)}
 [Logit Tuning] Best CV PR-AUC: 0.850
 
-[Logit] Validation PR-AUC: 0.840 | Best-Fβ thr: 0.210 (Fβ=0.893, beta=0.5)
+[Logit] Validation PR-AUC: 0.840 | Best-Fbeta thr: 0.210 (Fbeta=0.893, beta=0.5)
 
 === Logit (tuned) @ thr=0.210 ===
 ROC-AUC: 0.677
@@ -333,7 +333,7 @@ weighted avg      0.959     0.723     0.814       101
 {'clf__C': np.float64(0.4609877941534894), 'pca__n_components': 0.95}
 [Logit+PCA Tuning] Best CV PR-AUC: 0.856
 
-[Logit+PCA] Validation PR-AUC: 0.624 | Best-Fβ thr: 0.235 (Fβ=0.833, beta=0.5)
+[Logit+PCA] Validation PR-AUC: 0.624 | Best-Fbeta thr: 0.235 (Fbeta=0.833, beta=0.5)
 
 === Logit+PCA (tuned) @ thr=0.235 ===
 ROC-AUC: 0.724
@@ -357,7 +357,7 @@ weighted avg      0.972     0.574     0.701       101
 {'bootstrap': True, 'max_depth': 3, 'max_features': 'sqrt', 'min_samples_leaf': 27, 'min_samples_split': 14, 'n_estimators': 1582}
 [RF Tuning] Best CV PR-AUC: 0.805
 
-[RF] Validation PR-AUC: 0.975 | Best-Fβ thr: 0.119 (Fβ=0.972, beta=0.5)
+[RF] Validation PR-AUC: 0.975 | Best-Fbeta thr: 0.119 (Fbeta=0.972, beta=0.5)
 
 === Random Forest (tuned) @ thr=0.119 ===
 ROC-AUC: 0.721
@@ -381,7 +381,7 @@ weighted avg      0.972     0.465     0.604       101
 {'colsample_bytree': 0.8, 'gamma': 0, 'learning_rate': 0.1, 'max_depth': 2, 'min_child_weight': 3, 'n_estimators': 696, 'reg_lambda': 1.0, 'subsample': 0.8}
 [XGB Tuning] Best CV PR-AUC: 0.677
 
-[XGB] Validation PR-AUC: 0.858 | Best-Fβ thr: 0.087 (Fβ=0.937, beta=0.5)
+[XGB] Validation PR-AUC: 0.858 | Best-Fbeta thr: 0.087 (Fbeta=0.937, beta=0.5)
 
 === XGBoost (tuned) @ thr=0.087 ===
 ROC-AUC: 0.636
@@ -405,7 +405,7 @@ weighted avg      0.972     0.554     0.685       101
 {'final_estimator__C': np.float64(7.579479953348009)}
 [Stacking Tuning] Best CV PR-AUC: 0.705
 
-[Stacking] Validation PR-AUC: 0.975 | Best-Fβ thr: 0.110 (Fβ=0.972, beta=0.5)
+[Stacking] Validation PR-AUC: 0.975 | Best-Fbeta thr: 0.110 (Fbeta=0.972, beta=0.5)
 
 === Stacking (tuned) @ thr=0.110 ===
 ROC-AUC: 0.714
@@ -435,19 +435,20 @@ weighted avg      0.972     0.455     0.595       101
 [Choice] Select 'RF' based on highest validation PR-AUC (0.975); test PR-AUC=0.067, thr=0.119
 
 [Stability] Sliding windows (20% window, 5% step) on tuned models
-Logit: ROC-AUC 0.928±0.085 | PR-AUC 0.682±0.315 | BalAcc 0.680±0.124 | F1 0.337±0.220 | base 0.110
-Logit+PCA: ROC-AUC 0.881±0.083 | PR-AUC 0.568±0.253 | BalAcc 0.692±0.128 | F1 0.276±0.193 | base 0.110
-RF: ROC-AUC 0.902±0.078 | PR-AUC 0.545±0.317 | BalAcc 0.739±0.123 | F1 0.331±0.233 | base 0.110
-XGB: ROC-AUC 0.876±0.088 | PR-AUC 0.428±0.232 | BalAcc 0.690±0.125 | F1 0.327±0.196 | base 0.110
-Stacking: ROC-AUC 0.909±0.065 | PR-AUC 0.548±0.268 | BalAcc 0.793±0.134 | F1 0.398±0.227 | base 0.110
+Logit: ROC-AUC 0.928+/-0.085 | PR-AUC 0.682+/-0.315 | BalAcc 0.680+/-0.124 | F1 0.337+/-0.220 | base 0.110
+Logit+PCA: ROC-AUC 0.881+/-0.083 | PR-AUC 0.568+/-0.253 | BalAcc 0.692+/-0.128 | F1 0.276+/-0.193 | base 0.110
+RF: ROC-AUC 0.902+/-0.078 | PR-AUC 0.545+/-0.317 | BalAcc 0.739+/-0.123 | F1 0.331+/-0.233 | base 0.110
+XGB: ROC-AUC 0.876+/-0.088 | PR-AUC 0.428+/-0.232 | BalAcc 0.690+/-0.125 | F1 0.327+/-0.196 | base 0.110
+Stacking: ROC-AUC 0.909+/-0.065 | PR-AUC 0.548+/-0.268 | BalAcc 0.793+/-0.134 | F1 0.398+/-0.227 | base 0.110
 
 Saved tuning results and feature importances to tuning/.
 
 
-CONCLUSION 1:
-Validation PR-AUC looks great (RF/Stacking ~0.975), but the tiny test set (3 positives) sits near baseline (PR-AUC 0.05 ~ 0.067) with recall 1.0 and precision ~5 to 7%. Even with Fβ=0.5 (precision-leaning), the test is too noisy due to the scarcity of positives.
-Sliding windows give a more credible picture: PR-AUC means ~0.43 (XGB) to ~0.68 (Logit), F1 around 0.28–0.40. Stacking has the best mean F1 (~0.398) and solid balanced accuracy; Logit has the best mean PR-AUC (~0.682) but lower F1.
-Practical conclusion: report sliding/rolling metrics instead of the tiny test. Pick a simple/stable calibrated model (Logit or RF), or Stacking if you favor the top sliding F1, and use a higher threshold to cut false positives.
-the real issue is data volume/imbalance.
-SO w'll add an option to select the threshold by a target precision, and introduce light undersampling on the training set (train only, never val/test) to stabilize fits on the imbalanced data.
+CONCLUSION:
+The tiny test set (3 positives) is too noisy to decide; all models sit near baseline PR-AUC (~0.05-0.07) with ~5-7% precision. Don't rely on it.
+Sliding/rolling metrics are more informative. Stacking (RF+XGB->Logit) has the highest mean F1 (~0.398) and strong balanced accuracy (~0.79), PR-AUC ~0.55. RF and Logit+PCA are close: RF F1 ~0.33, PR-AUC ~0.53; Logit+PCA PR-AUC ~0.57 but lower F1 (~0.28). Plain Logit is simplest and has the best sliding PR-AUC (~0.68) with F1 ~0.34.
+Recommendation:
+
+If you want the best overall F1 and balanced accuracy, pick the calibrated Stacking model (threshold by Fbeta=0.5).
+If you prefer simplicity and a stronger PR-AUC signal, pick the calibrated Logit (or Logit+PCA) with Fbeta=0.5 threshold.
 """
