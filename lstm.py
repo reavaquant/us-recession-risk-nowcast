@@ -26,14 +26,11 @@ class SequenceDataset(Dataset):
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
         """
-        Initialize the focal loss module.
+        Initialize a FocalLoss instance.
 
         Parameters:
-        alpha (float, optional): scaling factor for positive samples. Defaults to 0.25.
-        gamma (float, optional): scaling factor for hard samples. Defaults to 2.0.
-
-        Returns:
-        None
+        alpha (float, optional): hyperparameter for focal loss. Defaults to 0.25.
+        gamma (float, optional): hyperparameter for focal loss. Defaults to 2.0.
         """
         super().__init__()
         self.alpha = alpha
@@ -41,14 +38,14 @@ class FocalLoss(nn.Module):
 
     def forward(self, logits, targets):
         """
-        Compute the focal loss given logits and targets.
+        Compute the focal loss for the given logits and targets.
 
         Parameters:
-        logits (torch.tensor): input logits
-        targets (torch.tensor): target labels
+        logits (torch.Tensor): input logits
+        targets (torch.Tensor): target labels
 
         Returns:
-        torch.tensor: the computed focal loss
+        torch.Tensor: computed loss
         """
         probs = torch.sigmoid(logits)
         ce = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
@@ -60,13 +57,13 @@ class FocalLoss(nn.Module):
 class LSTMClassifier(nn.Module):
     def __init__(self, input_size, hidden_size=64, num_layers=1, dropout=0.2):
         """
-        Initialize LSTMClassifier.
+        Initialize an LSTMClassifier instance.
 
         Parameters:
-        input_size (int): input size of LSTM
-        hidden_size (int, optional): hidden size of LSTM. Defaults to 64.
+        input_size (int): number of input features
+        hidden_size (int, optional): number of hidden units in the LSTM layer. Defaults to 64.
         num_layers (int, optional): number of LSTM layers. Defaults to 1.
-        dropout (float, optional): dropout rate of LSTM. Defaults to 0.2.
+        dropout (float, optional): dropout probability after each LSTM layer (except the last layer). Defaults to 0.2.
         """
         super().__init__()
         self.lstm = nn.LSTM(
